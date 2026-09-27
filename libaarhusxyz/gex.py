@@ -11,7 +11,20 @@ import matplotlib.pyplot as plt
 
 
 
-def split_sections(text):    
+def _strip_comment(line):
+    """Remove an inline '#' comment from a line, keeping its position.
+
+    '#' starts a comment in the GEX/INI format. Comment-only lines become
+    blank (and are ignored downstream) and inline comments after a value are
+    dropped. The line count is preserved so section slicing is unaffected,
+    and lines without a '#' are returned unchanged."""
+    idx = line.find("#")
+    if idx == -1:
+        return line
+    return line[:idx] + "\n"
+
+def split_sections(text):
+    text = [_strip_comment(line) for line in text]
     sectionheaders=[]
     for line in text:
         condition = np.logical_and( ("[" in line) , ("]" in line) )
