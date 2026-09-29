@@ -11,20 +11,34 @@ import matplotlib.pyplot as plt
 
 
 
-def _strip_comment(line):
-    """Remove an inline '#' comment from a line, keeping its position.
+def _strip_comment(line, in_section=False):
+    """Remove comments from a line, keeping its position.
 
-    '#' starts a comment in the GEX/INI format. Comment-only lines become
-    blank (and are ignored downstream) and inline comments after a value are
-    dropped. The line count is preserved so section slicing is unaffected,
-    and lines without a '#' are returned unchanged."""
+    Two comment conventions are in circulation and both are handled:
+
+    * ``#`` starts a comment anywhere on a line (NRG/Xcite style). Inline
+      comments after a value are dropped; comment-only lines become blank.
+    * ``/`` at the start of a line is a comment (Aarhus/SkyTEM style). It is
+      only stripped inside a section: the lines before ``[General]`` are the
+      file's preamble, kept verbatim as the ``header``.
+
+    The line count is preserved so section slicing is unaffected, and lines
+    without a comment are returned unchanged."""
+    if in_section and line.lstrip().startswith("/"):
+        return "\n"
     idx = line.find("#")
     if idx == -1:
         return line
     return line[:idx] + "\n"
 
 def split_sections(text):
-    text = [_strip_comment(line) for line in text]
+    stripped, in_section = [], False
+    for line in text:
+        line = _strip_comment(line, in_section)
+        if "[" in line and "]" in line:
+            in_section = True
+        stripped.append(line)
+    text = stripped
     sectionheaders=[]
     for line in text:
         condition = np.logical_and( ("[" in line) , ("]" in line) )
@@ -42,7 +56,10 @@ def split_sections(text):
     sectionlineidx.append(len(text)+1)
     sections={"header":text[0]}
     for k in range(len(sectionheaders)):
-        sections[sectionheaders[k]]=text[sectionlineidx[k]+1:sectionlineidx[k+1]-1]
+        # Up to (not including) the next header: the line right before a header
+        # is data too. The old ``-1`` dropped it, which only went unnoticed because
+        # SkyTEM files always leave a blank line there.
+        sections[sectionheaders[k]]=text[sectionlineidx[k]+1:sectionlineidx[k+1]]
     return sections, sectionheaders
 
 def parse_parameters(textlines):
