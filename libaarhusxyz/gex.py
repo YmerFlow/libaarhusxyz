@@ -136,7 +136,7 @@ def _dump(gex, f, columns=None):
     lines=[]
     
     now = datetime.now() 
-    gex['header']='/{0} gex file modified by the EmeraldProcessing toolbox '.format(now.strftime('%Y-%m-%d'))
+    gex['header']='/{0} gex file written by libaarhusxyz'.format(now.strftime('%Y-%m-%d'))
     lines.append(gex['header'])
     
     gex_keys=(list(gex.keys()))
