@@ -156,7 +156,8 @@ class XYZ(object):
              * Replaces * with NaN:s
              * Reprojects coordinates
                To lat/lon, web mercator and optionally to a project_crs
-             * Calculates xdist
+             * Calculates xdist, unless the flightlines already carry one
+               (see libaarhusxyz.normalizer.normalize)
              * Calculate z coordinates
              * Add missing default columns (filled with NaNs)
         """

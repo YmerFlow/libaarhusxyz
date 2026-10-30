@@ -172,6 +172,10 @@ def normalize_coordinates(model, project_crs=None):
     df["x_web"], df["y_web"] = project(headers["projection"], 3857, srcx, srcy)
     df["lon"], df["lat"] = project(headers["projection"], 4326, srcx, srcy)
 
+    if project_crs != headers["projection"] and "xdist" in df.columns:
+        # xdist is in the units of the old CRS; normalize() recomputes it.
+        del df["xdist"]
+
     headers["projection"] = project_crs
     
     model.flightlines = df
@@ -373,9 +377,16 @@ def normalize(model, project_crs=None, required_columns=None, naming_standard="l
          * Normalizes naming and format to our internal format
          * Replaces * with NaN:s
          * Reprojects coordinates
-         * Calculates xdist
+         * Calculates xdist, unless the flightlines already carry one
          * Calculate z coordinates
          * Add missing columns (filled with NaNs)
+
+    An existing xdist is kept as is, because it may have been measured on
+    denser data than the soundings now present: a decimated or averaged
+    dataset, or an inversion model, carries the distance along the full-rate
+    flight path, and recomputing it from the remaining soundings would
+    shorten every line. It is recomputed only when it is missing, entirely
+    NaN, or the coordinates are reprojected to another CRS.
 
     Parameters
     ----------
@@ -395,7 +406,8 @@ def normalize(model, project_crs=None, required_columns=None, naming_standard="l
     normalize_dates(model)
     normalize_sort_datetime(model)
 
-    calculate_xdist(model)
+    if "xdist" not in model.flightlines.columns or model.flightlines["xdist"].isna().all():
+        calculate_xdist(model)
     add_defaults(model, required_columns)
     normalize_depths(model)
     calculate_z(model)
