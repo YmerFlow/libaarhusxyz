@@ -5,6 +5,84 @@ import numpy as np
 from scipy.interpolate import interp1d
 from datetime import datetime
 
+from .. import normalizer
+
+HALFSPACE_NOTE = ("Last-layer bottom (halfspace) set for display only: "
+                  "its top plus the thickness of the layer above.")
+
+DEFAULT_ATTR_OUT = ['resistivity', 'resistivity_variance_factor', 'title', 'x', 'y',
+                    'topo', 'dep_top', 'dep_bot', 'tx_altitude', 'invalt', 'invaltstd',
+                    'deltaalt', 'numdata', 'resdata',
+                    'restotal', 'doi_upper', 'doi_lower', 'xdist']
+
+def _export_model(model, attr_out):
+    """Return a copy of `model` ready for 3D export, its attribute names, and a metadata note.
+
+    The copy uses libaarhusxyz names (resistivity, x, y, topo, title, ...)
+    whatever naming standard `model` is in, drops soundings without a finite
+    layer geometry (soundings that were never inverted), and gives a
+    non-finite last-layer bottom (the halfspace) a finite depth: its top plus
+    the thickness of the layer above. `model` itself is left unchanged.
+
+    Parameters
+    ----------
+    model : XYZ
+        Resistivity model with layer depths: dep_top / dep_bot [m below the
+        surface] or height [m].
+    attr_out : list of str
+        Attributes to write, in any naming standard.
+
+    Returns
+    -------
+    export : XYZ
+        The copy described above.
+    attr_out : list of str
+        `attr_out` in libaarhusxyz names, without duplicates.
+    note : str or None
+        HALFSPACE_NOTE when a last-layer bottom was replaced, else None.
+
+    Raises
+    ------
+    ValueError
+        If `model` has no layer depths (AEM data rather than a model), or no
+        sounding has a finite layer geometry.
+    """
+    export = libaarhusxyz.XYZ({
+        "flightlines": model.flightlines.copy(),
+        "layer_data": {key: ldf.copy() for key, ldf in model.layer_data.items()},
+        "model_info": dict(model.model_info)})
+    normalizer.normalize_naming(export, "libaarhusxyz")
+    export.flightlines = export.flightlines.loc[:, ~export.flightlines.columns.duplicated()]
+    normalizer.normalize_depths(export)
+    layers = export.layer_data
+    if "dep_top" not in layers or "dep_bot" not in layers:
+        raise ValueError("No layer depths (dep_top / dep_bot): only resistivity models can be "
+                         "exported in 3D, not AEM data.")
+
+    dep_top = layers["dep_top"].to_numpy(dtype=float)
+    dep_bot = layers["dep_bot"].to_numpy(dtype=float)
+    keep = np.isfinite(dep_top).all(axis=1) & np.isfinite(dep_bot[:, :-1]).all(axis=1)
+    if not keep.any():
+        raise ValueError("No sounding has a finite layer geometry to export.")
+    export.flightlines = export.flightlines.loc[keep].reset_index(drop=True)
+    for key in list(layers):
+        layers[key] = layers[key].loc[keep].reset_index(drop=True)
+
+    note = None
+    dep_top, dep_bot = dep_top[keep], dep_bot[keep]
+    halfspace = ~np.isfinite(dep_bot[:, -1])
+    if halfspace.any():
+        if dep_top.shape[1] < 2:
+            raise ValueError("A single halfspace layer has no finite bottom to export.")
+        thickness_above = dep_top[:, -1] - dep_top[:, -2]
+        layers["dep_bot"].iloc[:, -1] = np.where(halfspace, dep_top[:, -1] + thickness_above,
+                                                 dep_bot[:, -1])
+        note = HALFSPACE_NOTE
+
+    mapper = normalizer.get_name_mapper("libaarhusxyz")
+    attr_out = list(dict.fromkeys(mapper(attr) for attr in attr_out))
+    return export, attr_out, note
+
 def _compute_xdist(fl, x_col, y_col, line_id_col):
     fl["prevdist"] = np.append(
         [0],
@@ -72,10 +150,14 @@ def _write_vtk(point_coordinates,
               cell_indices_np, cells_out_vtk, cell_types_out_vtk,
               cells,
               fid,
-              attr_out):
+              attr_out,
+              note=None):
     print('# vtk DataFile Version 2.0', file=fid)
     # print('AEM grid export of tin_id = %s on %s ' %(tri['meta']['tri_id'], datetime.now().isoformat()), file=fid)
-    print('AEM grid export of TIN on %s ' %(datetime.now().isoformat(),), file=fid)
+    title = 'AEM grid export of TIN on %s' % (datetime.now().isoformat(),)
+    if note:
+        title += '. ' + note
+    print(title, file=fid)
     print('ASCII', file=fid)
 
     fid.write('DATASET UNSTRUCTURED_GRID\n')
@@ -92,7 +174,7 @@ def _write_vtk(point_coordinates,
     print('CELL_DATA', cells.shape[0], file=fid)
     for attr in attr_out:
         if attr not in cells.columns.to_list():
-            print(attr, ' is not in the given dataframe. this attribute will not be written to the VTK.')
+            # Absent from this model (e.g. Workbench-only columns): nothing to write.
             continue
         elif not np.issubdtype(cells.dtypes[attr],np.number):
             print(attr, ' is not a numeric column. this attribute will not be written to the VTK.')
@@ -132,20 +214,8 @@ def _vtk_cell_data(points_array):
 
     return point_coordinates, cell_indices_np, cells_out_vtk, cell_types_out_vtk
 
-def _dump(model, fid, attr_out = ['resistivity', 'resistivity_variance_factor','line_id','title', 'x', 'y',
-                                  'topo','dep_top', 'dep_bot','tx_alt', 'invalt', 'invaltstd',
-                                  'deltaalt', 'numdata', 'resdata',
-                                  'restotal', 'doi_upper', 'doi_lower', 'xdist']):
-    if np.isinf(model.layer_data["dep_bot"].iloc[:,-1].max()):
-        # normalise=True can create "inf" in last dep_bot layer, which breaks VTK export
-        # falsify last layer depth which was inf, with the 2nd last real layer depth + the difference between the last two real layer_depths
-        print("WARNING: Last model.layer_data[dep_bot] contains inf values, " \
-                                                      "falsifying the last dep_bot value." \
-                                                      "See .export.vtk._dump for more details")
-        last_layer_val = model.layer_data["dep_bot"].iloc[:, -2][0] + (model.layer_data["dep_bot"].iloc[:, -2][0]
-                                                                       -model.layer_data["dep_bot"].iloc[:, -3][0])
-        model.layer_data["dep_bot"] = model.layer_data["dep_bot"].replace([np.inf, -np.inf, np.nan], last_layer_val)
-
+def _dump(model, fid, attr_out=DEFAULT_ATTR_OUT):
+    model, attr_out, note = _export_model(model, attr_out)
     fl = model.flightlines
 
     # Get column names based on current naming standard
@@ -174,7 +244,8 @@ def _dump(model, fid, attr_out = ['resistivity', 'resistivity_variance_factor','
         point_coordinates, cell_indices_np, cells_out_vtk, cell_types_out_vtk,
         cells,
         fid,
-        attr_out)
+        attr_out,
+        note)
 
 def dump(model, nameorfile, **kw):
     if isinstance(nameorfile, str):
