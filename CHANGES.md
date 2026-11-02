@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-31
+
+### VTK and GLB export from inversion outputs (YmerFlow/ymerflow-business#135)
+
+Both exporters now prepare a copy of the model with `export.vtk._export_model` before writing; the model passed in is left unchanged (they used to overwrite its `dep_bot` and add columns to its flightlines).
+
+- The copy uses libaarhusxyz names whatever the model's naming standard, so an alc-named inversion output (`rho`, `UTMX`, `Topography`, `Line`, ...) exports its resistivity, coordinates and line. `attr_out` names in any standard are mapped the same way. Default attributes the model does not have are skipped silently instead of one printed line each; the default list has `tx_altitude` where it had `tx_alt` and no longer lists `line_id` (it maps to `title`).
+- Soundings without a finite layer geometry (never inverted: NaN resistivity, infinite depths) are left out of the mesh. They used to put `inf` into the VTK points and break the GLB.
+- An infinite last-layer bottom (the halfspace) becomes its top plus the thickness of the layer above, per sounding. The VTK title line and the GLB `asset.extras` say so. The old code used one value from row 0 for every sounding and failed with `KeyError: 0` on data whose index did not start at 0.
+- Datasets without layer depths (AEM data) raise `ValueError("No layer depths ...")` instead of `KeyError: 'dep_bot'`.
+- GLB: write `b"".join(gltf.save_to_bytes())`; pygltflib returns the file as a list of chunks, so the writer could not have written a file before.
+
 ## 2026-01-29
 
 ### Added case-insensitive column name detection in `xyz.py`
