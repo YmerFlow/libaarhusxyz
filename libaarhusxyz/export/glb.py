@@ -7,6 +7,8 @@ import struct
 import io
 
 from ..export.vtk import (
+    DEFAULT_ATTR_OUT,
+    _export_model,
     _compute_xdist,
     _compute_sounding_widths,
     _generate_cells,
@@ -132,22 +134,14 @@ def _create_gltf_buffer_data(point_coordinates, cell_indices_np, cells, attr_out
     return b''.join(buffer_parts), accessors_info
 
 
-def _dump(model, fid, attr_out=['resistivity', 'resistivity_variance_factor', 'line_id', 'title', 'x', 'y',
-                                  'topo', 'dep_top', 'dep_bot', 'tx_alt', 'invalt', 'invaltstd',
-                                  'deltaalt', 'numdata', 'resdata', 'restotal', 'doi_upper', 'doi_lower', 'xdist']):
+def _dump(model, fid, attr_out=DEFAULT_ATTR_OUT):
     """Export model to binary glTF (GLB) format.
 
     Similar to VTK export, creates a 3D mesh from resistivity model data.
+    The model is prepared as for VTK (see vtk._export_model); a replaced
+    halfspace bottom is noted in the file's asset extras.
     """
-    # Handle infinite depth values (same as VTK)
-    if np.isinf(model.layer_data["dep_bot"].iloc[:, -1].max()):
-        print("WARNING: Last model.layer_data[dep_bot] contains inf values, "
-              "falsifying the last dep_bot value. "
-              "See .export.glb._dump for more details")
-        last_layer_val = model.layer_data["dep_bot"].iloc[:, -2][0] + (
-            model.layer_data["dep_bot"].iloc[:, -2][0] - model.layer_data["dep_bot"].iloc[:, -3][0])
-        model.layer_data["dep_bot"] = model.layer_data["dep_bot"].replace([np.inf, -np.inf, np.nan], last_layer_val)
-
+    model, attr_out, note = _export_model(model, attr_out)
     fl = model.flightlines
 
     # Get column names based on current naming standard
@@ -177,6 +171,8 @@ def _dump(model, fid, attr_out=['resistivity', 'resistivity_variance_factor', 'l
 
     # Build glTF structure
     gltf = GLTF2()
+    if note:
+        gltf.asset.extras = {"note": note}
 
     # Buffer
     gltf.buffers = [Buffer(byteLength=len(buffer_data))]
@@ -266,8 +262,9 @@ def _dump(model, fid, attr_out=['resistivity', 'resistivity_variance_factor', 'l
 
     # Write to file
     if isinstance(fid, io.IOBase):
-        # For file-like objects, write the binary data
-        glb_data = gltf.save_to_bytes()
+        # For file-like objects, write the binary data. pygltflib returns the
+        # GLB as a list of chunks (header, JSON, binary), not one bytes object.
+        glb_data = b"".join(gltf.save_to_bytes())
         fid.write(glb_data)
     else:
         # fid is probably a file path string, but dump() handles that
