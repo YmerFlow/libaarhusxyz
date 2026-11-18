@@ -36,6 +36,8 @@ dbdt_inuse_ch2gt,,InUse_Ch02
 ,hm_z_dbdt,Gate_Ch02
 ,relunc_lm_z,STD_Ch01
 ,relunc_hm_z,STD_Ch02
+,data,Gate_Ch01
+,datastd,STD_Ch01
 
 topo,elevation,
 doi_upper,doi_conservative,
