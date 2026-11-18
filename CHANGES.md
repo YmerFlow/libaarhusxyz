@@ -12,6 +12,13 @@ Both exporters now prepare a copy of the model with `export.vtk._export_model` b
 - Datasets without layer depths (AEM data) raise `ValueError("No layer depths ...")` instead of `KeyError: 'dep_bot'`.
 - GLB: write `b"".join(gltf.save_to_bytes())`; pygltflib returns the file as a list of chunks, so the writer could not have written a file before.
 
+## 2026-10-29
+
+### DOI columns: no placeholder depths, NaN-aware `doi_layer` (YmerFlow/ymerflow-business#124)
+
+- `add_defaults`: a resistivity model without a DOI now gets NaN `doi_upper` / `doi_lower` (and a NaN default `doi_layer`) instead of 300 / 500 m. The old placeholders made a model that never had a DOI look as if it had one. This only ever happened under the libaarhusxyz naming standard: under alc, `add_defaults` returns early because `resistivity` has already become `rho`.
+- `calculate_doi_layer`: writes NaN instead of 0 ("above the DOI") for every layer of a sounding where either DOI is NaN. `doi_layer` is now float.
+
 ## 2026-01-29
 
 ### Added case-insensitive column name detection in `xyz.py`

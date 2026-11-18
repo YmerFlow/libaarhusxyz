@@ -205,11 +205,13 @@ def add_defaults(model, required_columns=None):
     if required_columns is None:
         required_columns = REQUIRED_COLUMNS
     
+    # A model without a DOI gets NaN, not a made-up depth: the columns are
+    # there for the exporters and readers that expect them, but say "unknown".
     if "doi_lower" not in df.columns:
-        df['doi_lower'] = np.full(len(df), 500, dtype=int)
+        df['doi_lower'] = np.nan
 
     if "doi_upper" not in df.columns:
-        df['doi_upper'] = np.full(len(df), 300, dtype=int)
+        df['doi_upper'] = np.nan
 
     for col in required_columns:
         if col not in df.columns:
@@ -224,7 +226,7 @@ def add_defaults(model, required_columns=None):
     ldf = next(iter(layer_dfs.values()))
     defaults = {
         'resistivity_variance_factor':np.nan,
-        'doi_layer':2,
+        'doi_layer':np.nan,
         'height':np.nan,
     }
     for key, default in defaults.items():
@@ -278,17 +280,34 @@ def calculate_height(model):
         layer_dfs["height"] = layer_dfs["dep_bot"] - layer_dfs["dep_top"]
 
 def calculate_doi_layer(model):
+    """Classify each layer against its sounding's depth of investigation.
+
+    Writes the layer table ``doi_layer``: 0 where the layer bottom is at or
+    above ``doi_upper``, 1 between ``doi_upper`` and ``doi_lower``, 2 below
+    ``doi_lower``, and NaN for every layer of a sounding where either DOI is
+    NaN (unknown, so neither above nor below). Does nothing unless the model
+    has ``dep_bot`` and both DOI columns.
+
+    Parameters
+    ----------
+    model : XYZ
+        Model with layer table ``dep_bot`` (layer bottom depth below the
+        surface [m], positive down) and flightline columns ``doi_upper`` and
+        ``doi_lower`` (DOI depth below the surface [m]).
+    """
     df = model.flightlines
     layer_dfs = model.layer_data
     if "dep_bot" in layer_dfs and "doi_lower" in df.columns and "doi_upper" in df.columns:
-        doi_lower = np.meshgrid(layer_dfs["dep_bot"].columns, df["doi_lower"])[1]
-        doi_upper = np.meshgrid(layer_dfs["dep_bot"].columns, df["doi_upper"])[1]
+        dep_bot = layer_dfs["dep_bot"]
+        doi_lower = np.meshgrid(dep_bot.columns, pd.to_numeric(df["doi_lower"], errors="coerce"))[1]
+        doi_upper = np.meshgrid(dep_bot.columns, pd.to_numeric(df["doi_upper"], errors="coerce"))[1]
 
-        layer_dfs["doi_layer"] = pd.DataFrame(
-            np.where(layer_dfs["dep_bot"] > doi_lower,
-                     2,
-                     np.where(layer_dfs["dep_bot"] > doi_upper,
-                              1, 0)), columns=layer_dfs["dep_bot"].columns)
+        doi_layer = np.where(dep_bot > doi_lower,
+                             2,
+                             np.where(dep_bot > doi_upper,
+                                      1, 0)).astype(float)
+        doi_layer[np.isnan(doi_lower) | np.isnan(doi_upper)] = np.nan
+        layer_dfs["doi_layer"] = pd.DataFrame(doi_layer, columns=dep_bot.columns)
 
 
 def _fix_hour_24(datetimestr):
